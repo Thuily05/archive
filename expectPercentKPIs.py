@@ -65,13 +65,20 @@ def calculate_goal_weights(df,
         grp['Profit_vs_Exp_%'] = (grp['Profit'] / grp['Expect_Profit'] * 100).where(
             grp['Expect_Profit'] != 0, other=0).round(1)
 
-        def status(pct):
-            if pct >= 100:  return 'ON TRACK'
-            elif pct >= 80: return 'WATCH'
-            else:           return 'BEHIND'
+        def status_sales(pct):
+            if pct >= 100:  return 'DAT KY VONG'
+            elif pct >= 80: return 'CAN THEO DOI'
+            else:           return 'CHUA DAT'
 
-        grp['Sales_Status']  = grp['Sales_vs_Exp_%'].apply(status)
-        grp['Profit_Status'] = grp['Profit_vs_Exp_%'].apply(status)
+        def status_profit(pct, expect):
+            if expect <= 0:  return 'BI LO'
+            if pct >= 100:   return 'DAT KY VONG'
+            elif pct >= 80:  return 'CAN THEO DOI'
+            else:            return 'CHUA DAT'
+
+        grp['Sales_Status']  = grp['Sales_vs_Exp_%'].apply(status_sales)
+        grp['Profit_Status'] = grp.apply(
+            lambda r: status_profit(r['Profit_vs_Exp_%'], r['Expect_Profit']), axis=1)
 
         results[label] = grp
 
@@ -98,7 +105,12 @@ def calculate_goal_weights(df,
     import matplotlib.pyplot as plt
     import os
 
-    status_colors = {'ON TRACK': '#d4f0e3', 'WATCH': '#fff3cd', 'BEHIND': '#fde8e8'}
+    status_colors = {
+        'DAT KY VONG':  '#d4f0e3',
+        'CAN THEO DOI': '#fff3cd',
+        'CHUA DAT':     '#fde8e8',
+        'BI LO':        '#f0d0d0',
+    }
     header_color  = '#2c3e50'
     row_colors    = ['#f9f9f9', '#ffffff']
 
