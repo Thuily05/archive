@@ -114,7 +114,7 @@ def calculate_goal_weights(df,
     header_color  = '#2c3e50'
     row_colors    = ['#f9f9f9', '#ffffff']
 
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'expectKPIsOutput')
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'expectKPIsOutput/average')
     os.makedirs(output_dir, exist_ok=True)
 
     for label, tbl in results.items():
