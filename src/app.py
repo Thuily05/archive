@@ -20,7 +20,7 @@ for _p in [_ARCHIVE, os.path.join(_ARCHIVE, 'target')]:
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Are We Going to Reach Our Goals?",
-    page_icon="🎯",
+    page_icon=":material/track_changes:",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -109,7 +109,7 @@ def achieve_pct(actual, target):
     return round(actual / target * 100, 1)
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.title("🎯 Are We Going to Reach Our Goals?")
+st.title("Are We Going to Reach Our Goals?")
 st.caption("4-Year KPI Storyboard  |  2014–2017 Actuals  +  2018 Projection  |  Powered by XGBoost Rolling Forecast")
 st.divider()
 
@@ -132,10 +132,10 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 4-Year Overview",
-    "🎯 KPI Tier Ranges",
-    "📅 Monthly Tracking",
-    "🔭 2018 Projection",
+    ":material/bar_chart: 4-Year Overview",
+    ":material/track_changes: KPI Tier Ranges",
+    ":material/calendar_month: Monthly Tracking",
+    ":material/rocket_launch: 2018 Projection",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -402,12 +402,12 @@ with tab4:
         r18 = d['SR'][2018][metric]
         base= d['B'][2018][metric]
         col.markdown(f"**{metric}**")
-        col.metric("Baseline",    vfmt(base,           metric))
-        col.metric("✅ Achievable", vfmt(r18['Achievable'], metric),
+        col.metric("Baseline",     vfmt(base,                metric))
+        col.metric("Achievable",   vfmt(r18['Achievable'],   metric),
                    delta="+10% vs baseline")
-        col.metric("🎯 Challenging", vfmt(r18['Challenging'], metric),
+        col.metric("Challenging",  vfmt(r18['Challenging'],  metric),
                    delta="+20% vs baseline")
-        col.metric("💪 Stretch",    vfmt(r18['Stretch'],    metric),
+        col.metric("Stretch",      vfmt(r18['Stretch'],      metric),
                    delta="+35% vs baseline")
 
     st.divider()
@@ -473,7 +473,7 @@ with tab4:
     st.plotly_chart(fig4, use_container_width=True)
 
     # 2014 Q1 projection note
-    with st.expander("ℹ️  How was the 2014 baseline derived?"):
+    with st.expander("How was the 2014 baseline derived?", icon=":material/info:"):
         st.markdown("""
 **2014** là năm đầu tiên — không có prior year data để dự báo.
 Sau Q1 (3 tháng thử nghiệm), model dùng actual Jan–Mar + XGBoost seasonal weights để project cả năm:
