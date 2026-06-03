@@ -237,6 +237,13 @@ with tab2:
 
     # Tier bands (stacked area)
     prev = [d['B'][yr][metric2] for yr in YEARS_ALL]
+    # Baseline must be added first so fill='tonexty' in tier traces fills from baseline upward
+    fig2.add_trace(go.Scatter(
+        x=x_labels, y=prev,
+        fill=None, line=dict(color='rgba(149,165,166,0.5)', width=1.5, dash='dash'),
+        name='Baseline', mode='lines',
+        hovertemplate='Baseline: %{y:,.0f}<extra></extra>',
+    ))
     for tier in tiers_order:
         mult = {'Achievable':1.10,'Challenging':1.20,'Stretch':1.35,'Moonshot':1.50}[tier]
         curr = [d['B'][yr][metric2] * mult for yr in YEARS_ALL]
@@ -247,14 +254,6 @@ with tab2:
             name=tier, mode='lines',
             hovertemplate=f'{tier}: %{{y:,.0f}}<extra></extra>',
         ))
-        # First iteration needs a base trace
-        if tier == 'Achievable':
-            fig2.add_trace(go.Scatter(
-                x=x_labels, y=prev,
-                fill=None, line=dict(color='rgba(149,165,166,0.5)', width=1.5, dash='dash'),
-                name='Baseline', mode='lines',
-                hovertemplate='Baseline: %{y:,.0f}<extra></extra>',
-            ))
         prev = curr
 
     # Actual bars (2014-2017)
@@ -351,7 +350,7 @@ with tab3:
         marker_color=bar_cols, opacity=0.8,
         name='Actual', yaxis='y1',
         text=[f"{e:+.0f}%" for e in errors],
-        textposition='outside', textfont_size=9,
+        textposition='auto', textfont_size=9,
         hovertemplate='Actual: %{y:,.0f}<extra></extra>',
     ))
 
