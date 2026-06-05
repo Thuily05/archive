@@ -8,12 +8,16 @@ Initial state (imported from monthlyForecast2015.py):
   ANNUAL_TARGET_2016  predicted annual from 2015 H2/H1 momentum
 
 Exports (for monthlyForecast2017.py):
-  CALIBRATED_WEIGHTS   {metric: np.array}
-  XGB_MODELS           {metric: XGBRegressor}
-  ANNUAL_TARGET_2017   {metric: float}
-  FORECAST_2016        {metric: {month: {target, actual, error_pct, annual_est}}}
-  ACTUAL_2016          {metric: {month: float}}
-  ANNUAL_TARGET_2016   {metric: float}  kept for audit trail
+  CALIBRATED_WEIGHTS        {metric: np.array}
+  XGB_MODELS                {metric: XGBRegressor}
+  ANNUAL_TARGET_2017        {metric: float}
+  FORECAST_2016             {metric: {month: {target, actual, error_pct, annual_est}}}
+  ACTUAL_2016               {metric: {month: float}}
+  ANNUAL_TARGET_2016        {metric: float}  kept for audit trail
+  ACTUAL_2016_REGION        {region: {metric: {month: float}}}
+  FORECAST_2016_REGION      {region: {metric: {month: {target, actual, error_pct, annual_est}}}}
+  ANNUAL_TARGET_2016_REGION {region: {metric: float}}
+  REGION_SHARE_2016         {region: {metric: float}}
 """
 
 import os
@@ -30,6 +34,7 @@ BETA        = 0.50
 BASE_GROWTH = 0.10
 
 METRICS   = ['Sales', 'Profit', 'Customers', 'Orders']
+REGIONS   = ['Central', 'East', 'South', 'West']
 UNIT      = {'Sales': '$', 'Profit': '$', 'Customers': '', 'Orders': ''}
 MA        = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -40,6 +45,7 @@ sys.path.insert(0, BASE_DIR)
 from monthlyForecast2015 import (
     CALIBRATED_WEIGHTS as W_INIT,
     ANNUAL_TARGET_2016 as ANN_INIT,
+    ACTUAL_2015_REGION,
 )
 
 # ── Data ──────────────────────────────────────────────────────────────────────
@@ -75,6 +81,23 @@ def get_actuals(df, year):
         for metric in METRICS
     }
 
+def get_actuals_region(year):
+    result = {}
+    for region in REGIONS:
+        sub = df_raw[(df_raw['Year'] == year) & (df_raw['Region'] == region)]
+        agg = {
+            'Sales'    : sub.groupby('Month')['Sales'].sum(),
+            'Profit'   : sub.groupby('Month')['Profit'].sum(),
+            'Customers': sub.groupby('Month')['Customer ID'].nunique(),
+            'Orders'   : sub.groupby('Month')['Order ID'].nunique(),
+        }
+        result[region] = {
+            metric: {int(m): float(v)
+                     for m, v in s.reindex(range(1, 13), fill_value=0).items()}
+            for metric, s in agg.items()
+        }
+    return result
+
 def _train_xgb(X, y):
     m = XGBRegressor(n_estimators=400, max_depth=3, learning_rate=0.05,
                      subsample=0.8, colsample_bytree=0.8, min_child_weight=2,
@@ -101,6 +124,63 @@ def train_all(df_m):
         weights[metric] = _get_weights(model)
     return models, weights
 
+def run_rolling_forecast(actuals, annual_est_init, w_init, alpha, beta, jan_override=None):
+    """
+    Rolling monthly forecast shared by global and region runs.
+
+    actuals        : {metric: {month: float}}
+    annual_est_init: {metric: float}  initial annual estimate
+    w_init         : {metric: np.array}  initial seasonal weights (12 values)
+    jan_override   : {metric: float} | None  force month-1 target
+    Returns        : (forecast_dict, final_annual_est)
+    """
+    w_cur      = {m: w_init[m].copy() for m in METRICS}
+    w_orig     = {m: w_init[m].copy() for m in METRICS}
+    annual_est = {m: float(annual_est_init[m]) for m in METRICS}
+    forecast   = {m: {} for m in METRICS}
+
+    for month in range(1, 13):
+        for metric in METRICS:
+            w   = w_cur[metric]
+            w_o = w_orig[metric]
+            ann = annual_est[metric]
+
+            if jan_override and month == 1:
+                target_m = float(jan_override[metric])
+            else:
+                spent   = sum(actuals[metric][k] for k in range(1, month))
+                rem_bg  = ann - spent
+                rem_w   = w[month - 1:]
+                rem_sum = float(rem_w.sum())
+                target_m = (float(rem_bg * w[month-1] / rem_sum)
+                            if rem_sum > 0 else rem_bg / (13 - month))
+            target_m = round(target_m, 2)
+
+            actual_m = actuals[metric][month]
+            error    = round((actual_m - target_m) / abs(target_m) * 100, 1) if target_m != 0 else 0.0
+
+            forecast[metric][month] = {
+                'target'    : target_m,
+                'actual'    : actual_m,
+                'error_pct' : error,
+                'annual_est': round(ann, 1),
+            }
+
+            if target_m != 0:
+                ratio   = float(np.clip(actual_m / target_m, 0.1, 5.0))
+                updated = w_cur[metric].copy()
+                for k in range(month, 12):
+                    updated[k] *= (1 + alpha * (ratio - 1))
+                w_cur[metric] = updated
+
+            cum_w   = float(w_o[0:month].sum())
+            cum_act = sum(actuals[metric][k] for k in range(1, month + 1))
+            if cum_w > 0:
+                pace = cum_act / cum_w
+                annual_est[metric] = round((1 - beta) * ann + beta * pace, 2)
+
+    return forecast, annual_est
+
 def predict_annual_next(actuals):
     result = {}
     for metric in METRICS:
@@ -116,50 +196,12 @@ def predict_annual_next(actuals):
 df_all      = aggregate(list(range(2014, 2018)))
 ACTUAL_2016 = get_actuals(df_all, 2016)
 
-# ── Initial state ─────────────────────────────────────────────────────────────
-w_orig     = {m: W_INIT[m].copy() for m in METRICS}
-w_cur      = {m: W_INIT[m].copy() for m in METRICS}
-annual_est = {m: float(ANN_INIT[m]) for m in METRICS}
-
-# ── Rolling forecast ──────────────────────────────────────────────────────────
-FORECAST_2016 = {m: {} for m in METRICS}
-
-for month in range(1, 13):
-    for metric in METRICS:
-        w   = w_cur[metric]
-        w_o = w_orig[metric]
-        ann = annual_est[metric]
-
-        spent    = sum(ACTUAL_2016[metric][k] for k in range(1, month))
-        rem_bg   = ann - spent
-        rem_w    = w[month - 1:]
-        rem_sum  = float(rem_w.sum())
-        target_m = (float(rem_bg * w[month-1] / rem_sum)
-                    if rem_sum > 0 else rem_bg / (13 - month))
-        target_m = round(target_m, 2)
-
-        actual_m = ACTUAL_2016[metric][month]
-        error    = round((actual_m - target_m) / abs(target_m) * 100, 1) if target_m != 0 else 0.0
-
-        FORECAST_2016[metric][month] = {
-            'target'    : target_m,
-            'actual'    : actual_m,
-            'error_pct' : error,
-            'annual_est': round(ann, 1),
-        }
-
-        if target_m != 0:
-            ratio   = float(np.clip(actual_m / target_m, 0.1, 5.0))
-            updated = w_cur[metric].copy()
-            for k in range(month, 12):
-                updated[k] *= (1 + ALPHA * (ratio - 1))
-            w_cur[metric] = updated
-
-        cum_w   = float(w_o[0:month].sum())
-        cum_act = sum(ACTUAL_2016[metric][k] for k in range(1, month + 1))
-        if cum_w > 0:
-            pace = cum_act / cum_w
-            annual_est[metric] = round((1 - BETA) * ann + BETA * pace, 2)
+# ── Rolling forecast — global ─────────────────────────────────────────────────
+FORECAST_2016, annual_est = run_rolling_forecast(
+    ACTUAL_2016,
+    {m: float(ANN_INIT[m]) for m in METRICS},
+    W_INIT, ALPHA, BETA,
+)
 
 # ── End-of-year calibration ───────────────────────────────────────────────────
 df_16 = aggregate([2016])
@@ -172,6 +214,36 @@ SUM_MONTHLY_2016   = {
     metric: round(sum(FORECAST_2016[metric][m]['target'] for m in range(1, 13)), 2)
     for metric in METRICS
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PHASE 4: Region-level rolling forecast
+# ─────────────────────────────────────────────────────────────────────────────
+ACTUAL_2016_REGION = get_actuals_region(2016)
+
+# Region share from 2015 actual distribution (prior year)
+REGION_SHARE_2016 = {}
+for _r in REGIONS:
+    REGION_SHARE_2016[_r] = {}
+    for _m in METRICS:
+        _r_total   = sum(ACTUAL_2015_REGION[_r][_m].values())
+        _all_total = sum(sum(ACTUAL_2015_REGION[r][_m].values()) for r in REGIONS)
+        REGION_SHARE_2016[_r][_m] = _r_total / _all_total if _all_total > 0 else 0.25
+
+ANNUAL_TARGET_2016_REGION = {
+    _r: {
+        _m: round(float(ANN_INIT[_m]) * REGION_SHARE_2016[_r][_m], 2)
+        for _m in METRICS
+    }
+    for _r in REGIONS
+}
+
+FORECAST_2016_REGION = {}
+for _r in REGIONS:
+    FORECAST_2016_REGION[_r], _ = run_rolling_forecast(
+        ACTUAL_2016_REGION[_r],
+        ANNUAL_TARGET_2016_REGION[_r],
+        W_INIT, ALPHA, BETA,
+    )
 
 # ── Print ─────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
@@ -263,11 +335,41 @@ if __name__ == '__main__':
         growth = round((tgt17 - act16) / act16 * 100, 1) if act16 else 0.0
         print(f"  {metric:<12}  {f(act16,u,14)}  {growth:>+8.1f}%  {f(tgt17,u,14)}")
 
+    # ── Phase 4: Region rolling forecast ─────────────────────────────────────
+    print()
+    print('=' * W)
+    print(f"{'2016  REGION-LEVEL ROLLING MONTHLY FORECAST':^{W}}")
+    print('=' * W)
+
+    for metric in METRICS:
+        u = UNIT[metric]
+        print(f"\n  {metric}")
+        print(f"  {'Region':<10}  {'Ann. Target':>12}  {'Actual 2016':>12}  {'Gap%':>6}")
+        print('  ' + '-' * 48)
+        for region in REGIONS:
+            ann_r = ANNUAL_TARGET_2016_REGION[region][metric]
+            act_r = sum(ACTUAL_2016_REGION[region][metric].values())
+            gap_r = round((act_r - ann_r) / ann_r * 100, 1) if ann_r else 0.0
+            print(f"  {region:<10}  {f(ann_r, u, 12)}  {f(act_r, u, 12)}  {gap_r:>+5.1f}%")
+
+        for region in REGIONS:
+            print()
+            print(f"    {region}")
+            print(f"    {'Month':<6}  {'Target':>12}  {'Actual':>12}  {'Error%':>8}  {'Annual Est.':>14}")
+            print('    ' + '-' * 60)
+            for m in range(1, 13):
+                r       = FORECAST_2016_REGION[region][metric][m]
+                t, a, e = r['target'], r['actual'], r['error_pct']
+                ae      = r['annual_est']
+                print(f"    {MA[m]:<6}  {f(t,u)}  {f(a,u)}  {e:>+7.1f}%  {f(ae,u,14)}")
+
     print()
     print('=' * W)
     print('  EXPORTS for monthlyForecast2017.py:')
     print('    from monthlyForecast2016 import (')
     print('        CALIBRATED_WEIGHTS, XGB_MODELS,')
     print('        ANNUAL_TARGET_2017, ACTUAL_2016, FORECAST_2016,')
+    print('        ACTUAL_2016_REGION, FORECAST_2016_REGION,')
+    print('        ANNUAL_TARGET_2016_REGION, REGION_SHARE_2016,')
     print('    )')
     print('=' * W)
